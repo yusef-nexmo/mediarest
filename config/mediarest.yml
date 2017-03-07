@@ -1,0 +1,34 @@
+identityService:
+  host: ${NEXMO_ACCOUNTS_HOST:-localhost}
+  port: ${NEXMO_ACCOUNTS_PORT:-3031}
+  authHost: ${NEXMO_AUTH_HOST:-localhost}
+  authPort: ${NEXMO_AUTH_PORT:-3031}
+  authFilters: JWT:NEXMO
+
+# For use by DropWizard
+server:
+  applicationConnectors:
+  - type: http 
+    port: ${NEXMO_MEDIA_PORT:-3031}
+  adminConnectors:
+  - type: http
+    port: ${NEXMO_MEDIA_PORT_ADMIN:-3032}
+  requestLog:
+      appenders:
+      - type: filtered-access
+        currentLogFilename: logs/access.log
+        archivedLogFilenamePattern: logs/access-%d.log.gz
+
+logging:
+  level: INFO
+  appenders:
+      - type: file
+        currentLogFilename: logs/messaging.log
+        archivedLogFilenamePattern: logs/messaging-%d.log.gz
+      - type: file
+        currentLogFilename: logs/errors.log
+        threshold: ERROR
+        archivedLogFilenamePattern: logs/errors-%d.log.gz
+      - type: console
+  loggers:
+      "io.netty": ERROR

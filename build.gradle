@@ -1,0 +1,54 @@
+version = '0.1.0'
+group = 'com.nexmo'
+
+apply plugin: 'application'
+apply plugin: 'eclipse'
+sourceCompatibility = 1.8
+mainClassName = "com.nexmo.mediarest.MediaServiceApplication"
+
+project.ext {
+    versionNexmoRest = '1.4.8'
+
+    serviceName = 'mediarest'
+    userName = "mediarest"
+    configFileName = "mediarest.yml"
+    initScriptDefault = true
+    daemonArgs = "server" //required for starting a dropwizard service
+}
+
+buildscript {
+    repositories {
+        maven {url "http://artifactory.internal/artifactory/plugins-release-local/"}
+        maven {url "https://plugins.gradle.org/m2/"}
+    }
+    dependencies {
+        classpath 'com.nexmo.gradle:common-build:3.11'
+    }
+}
+
+dependencies {
+    compile "com.nexmo:nexmo-restsvc:$versionNexmoRest"
+}
+
+repositories {
+    jcenter()
+    mavenLocal()
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.13'
+}
+
+run {
+    args "server", "$projectDir/config/mediarest.yml"
+}
+
+jar {
+    manifest {
+        attributes 'X-Nexmo-Module': 'APP',
+            'Main-Class': "${mainClassName}"
+    }
+}
+
+apply plugin: "com.nexmo.gradle.common-app-build"
+check.dependsOn debCreatePackage

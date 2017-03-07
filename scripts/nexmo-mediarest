@@ -1,0 +1,154 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:          @daemonName@
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: @daemonShortDescription@
+# Description:       @daemonDescription@
+### END INIT INFO
+
+
+DAEMON_RUNTIME=@daemonRuntime@
+DAEMON_JAR=@daemonJar@
+DAEMON_CONF=@daemonConf@
+
+DAEMON_NAME=@daemonName@
+DAEMON_USER=@daemonUser@
+DAEMON_ARGS=@daemonArgs@
+DAEMON_OPTS=@daemonOptions@
+DAEMON_JVM_OPTS=@daemonJvmOptions@
+DAEMON_JAVA_HOME=@daemonJavaHome@
+DAEMON_PROPS_FILE=@daemonApplicationEnv@
+
+
+# Load some properties from configuration file if it exists to overwrite some values
+[ -f $DAEMON_PROPS_FILE ] && [ -r $DAEMON_PROPS_FILE ] && . $DAEMON_PROPS_FILE
+
+
+# Server parameter is only used by dropwizard
+DAEMON_OPTS="-Dcapsule.reset=true -jar $DAEMON_RUNTIME/$DAEMON_JAR $DAEMON_JVM_OPTS $DAEMON_ARGS ${DAEMON_CONF/\/\///} $DAEMON_OPTS"
+
+DAEMON_EXEC=$DAEMON_JAVA_HOME/bin/java
+DAEMON_LOGS=/var/log/$DAEMON_NAME.log
+DAEMON_PIDFILE=/var/run/$DAEMON_NAME.pid
+
+. /lib/lsb/init-functions
+
+do_start () {
+    echo "---- START $DAEMON_NAME - $(date) ----" >> $DAEMON_LOGS
+
+    loadJVMProperties
+
+    log_daemon_msg "Starting system $DAEMON_NAME daemon"
+    start-stop-daemon --verbose --start --no-close --background --pidfile $DAEMON_PIDFILE --make-pidfile --user $DAEMON_USER --chuid $DAEMON_USER --chdir $DAEMON_RUNTIME --exec $DAEMON_EXEC -- $DAEMON_OPTS >> $DAEMON_LOGS 2>&1
+    log_end_msg $?
+}
+do_stop () {
+    echo "---- STOP $DAEMON_NAME - $(date) ----" >> $DAEMON_LOGS
+    log_daemon_msg "Stopping system $DAEMON_NAME daemon"
+    start-stop-daemon --stop --pidfile $DAEMON_PIDFILE --retry TERM/30/TERM/30/KILL/5 >> $DAEMON_LOGS 2>&1
+    log_end_msg $?
+}
+
+loadJVMProperties() {
+JVM_PROPERTY_PATH=${DAEMON_RUNTIME}/jvm.properties
+
+    if [ -f ${JVM_PROPERTY_PATH} ] ; then
+      log_daemon_msg "Found jvm.properties file"
+
+      . ${JVM_PROPERTY_PATH}
+      if [ $gc_enabled == "true" ] ; then
+        LOG_DIR=${DAEMON_RUNTIME}/logs
+        # We need to be sure that the folder exists otherwise gc log will not be created
+        if [ ! -d ${LOG_DIR} ]
+        then
+            mkdir -p ${LOG_DIR}
+            chown ${DAEMON_USER}: ${LOG_DIR}
+        fi
+        LOG=${LOG_DIR}/gc.log
+        LOGFILE_COUNT=10
+        LOGFILE_SIZE=10M
+        GC_ALGORITHM=
+        if [ "$gc_logfile_count" != "" ] ; then
+          LOGFILE_COUNT=$gc_logfile_count
+        fi
+        if [ "$gc_logfile_size" != "" ] ; then
+          LOGFILE_SIZE=$gc_logfile_size
+        fi
+        # If not "cms" then defaults to no algorithm specified
+        # which is the current default
+        # (which in turn defaults to the throughput collector in  1.7.0_7)
+        if [ "$gc_algorithm" == "g1" ] ; then
+
+          GC_ALGORITHM="-XX:+UseG1GC -XX:MaxGCPauseMillis=90"
+
+          if [ ! -z "$heap_size_min" ] ; then
+            MIN_HEAP=$heap_size_min
+          fi
+
+        fi
+        if [ "$gc_algorithm" == "cms-hub" ] ; then
+          #we need to set a min heap size for this to be effective otherwise the young gen will be tiny
+          if [[ "x${MAX_HEAP}" != "x0" && "x${MAX_HEAP}" != "x" ]]
+          then
+            let "MIN_HEAP = 4 * ${MAX_HEAP} / 8" #started with 3/8, but have gone for 1/2 for now
+            GC_ALGORITHM="-XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:NewRatio=1 -XX:MaxTenuringThreshold=5 -XX:SurvivorRatio=3 -XX:TargetSurvivorRatio=80 -XX:+PerfDisableSharedMem -XX:-UseAdaptiveSizePolicy -XX:MaxGCPauseMillis=80 -XX:ConcGCThreads=20"
+          else
+            GC_ALGORITHM="-XX:+UseConcMarkSweepGC -XX:+UseParNewGC"
+          fi
+          #-XX:CMSInitiatingOccupancyFraction=75 -XX:+UseCMSInitiatingOccupancyOnly -XX:+ScavengeBeforeFullGC -XX:+UseBiasedLocking
+        fi
+        DAEMON_JVM_OPTS="${DAEMON_JVM_OPTS} -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime -Xloggc:$LOG -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=$LOGFILE_COUNT -XX:GCLogFileSize=$LOGFILE_SIZE $GC_ALGORITHM"
+
+        #apply jvm min heap
+
+        if [ ! -z "$MIN_HEAP" ] ; then
+            DAEMON_JVM_OPTS="${DAEMON_JVM_OPTS} -Xms${MIN_HEAP}m"
+        fi
+
+        ## -- Move the last log written to gc.log.LOGFILE_COUNT
+        ## -- note the JVM itself never writes that file
+        # First check there is at least the .0 log
+        if [ -f "${LOG}.0" ] ; then
+          LAST_LOGFILE_WRITTEN=`ls -1rt $LOG.* | tail -1`
+          if [ "$LAST_LOGFILE_WRITTEN" != "${LOG}.${LOGFILE_COUNT}" ] ; then
+            mv "$LAST_LOGFILE_WRITTEN" "${LOG}.${LOGFILE_COUNT}"
+          fi
+        fi
+      fi
+    fi
+    ## RMI GC interval is set whether or not there is a jvm.properties,
+    ## but can be overridden in the jvm.properties
+    if [ "$rmi_gc_interval_milliseconds" == "" ] ; then
+      # use a default value of 10 years (1 year is ~32m seconds, so 10 years ~320 000 000 000 milliseconds)
+      # if not set, the JVM default is 1 hour, so you would get a full GC every hour
+      export rmi_gc_interval_milliseconds=320000000000
+    fi
+    DAEMON_JVM_OPTS="${DAEMON_JVM_OPTS} -Dsun.rmi.dgc.server.gcInterval=$rmi_gc_interval_milliseconds -Dsun.rmi.dgc.client.gcInterval=$rmi_gc_interval_milliseconds"
+}
+
+case "$1" in
+
+    start|stop)
+        do_${1}
+        ;;
+
+    restart|reload|force-reload)
+        do_stop
+        do_start
+        ;;
+
+    status)
+        status_of_proc -p $DAEMON_PIDFILE "$DAEMON_NAME" "$DAEMON_NAME" && exit 0 || exit $?
+        ;;
+
+    *)
+        echo "Usage: /etc/init.d/$DAEMON_NAME {start|stop|restart|status}"
+        exit 1
+        ;;
+
+esac
+exit 0
