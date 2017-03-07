@@ -27,6 +27,9 @@ buildscript {
 }
 
 dependencies {
+    compile ("com.nexmo:media-client:+") {
+        exclude group: 'org.apache.logging.log4j'
+    }
     compile "com.nexmo:nexmo-restsvc:$versionNexmoRest"
 }
 

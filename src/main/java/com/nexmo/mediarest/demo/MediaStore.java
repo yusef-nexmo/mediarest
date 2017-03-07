@@ -7,7 +7,8 @@ import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.nexmo.mediarest.entities.MediaDescriptor;
+import com.nexmo.mediarest.entities.MediaUpdate;
+import com.nexmo.services.media.client.entity.MediaItem;
 
 public class MediaStore {
     private final AtomicInteger nextId = new AtomicInteger(1);
@@ -18,21 +19,15 @@ public class MediaStore {
         return storeItems.get(id);
     }
 
-    public void update(StoreItem item, MediaDescriptor update) {
-        if (update.getMimeType() != null)
-            item.meta.setMimeType(update.getMimeType());
+    public void update(StoreItem item, MediaUpdate update) {
         if (update.getTitle() != null)
             item.meta.setTitle(update.getTitle());
         if (update.getDescription() != null)
             item.meta.setDescription(update.getDescription());
-        if (update.getEtag() != null)
-            item.meta.setEtag(update.getEtag());
-        if (update.getTimesDownloaded() != null)
-            item.meta.setTimesDownloaded(update.getTimesDownloaded());
-        if (update.getMaxDownloadsAllowed() != null)
-            item.meta.setMaxDownloadsAllowed(update.getMaxDownloadsAllowed());
-        if (update.getEndOfLife() != null)
-            item.meta.setEndOfLife(new Date(update.getEndOfLife()));
+        if (update.getMimeType() != null)
+            item.meta.setMimeType(update.getMimeType());
+        if (update.isPublic() != null)
+            item.meta.setAccountId(update.isPublic() ? "public1" : null); //xxx how exactly would this work?!!
         item.meta.setTimeLastUpdated(new Date());
     }
 

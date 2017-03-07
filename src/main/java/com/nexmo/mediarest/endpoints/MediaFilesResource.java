@@ -25,7 +25,8 @@ import org.glassfish.jersey.media.multipart.FormDataParam;
 
 import com.nexmo.mediarest.MediaServiceApplication;
 import com.nexmo.mediarest.demo.MediaStore;
-import com.nexmo.mediarest.entities.MediaDescriptor;
+import com.nexmo.mediarest.entities.MediaUpdate;
+import com.nexmo.services.media.client.entity.MediaItem;
 import com.nexmo.restsvc.auth.NexmoIdentity;
 
 @javax.ws.rs.Path(MediaServiceApplication.APIVERSION+"/media")
@@ -73,7 +74,7 @@ public class MediaFilesResource {
 
     @javax.ws.rs.Path("{media_id}/info")
     @javax.ws.rs.GET
-    @io.swagger.annotations.ApiOperation(value="Get media-file metadata", response=MediaDescriptor.class)
+    @io.swagger.annotations.ApiOperation(value="Get media-file metadata", response=MediaItem.class)
     @io.swagger.annotations.ApiResponses(value = {
             @ApiResponse(code = 200, message = "OK"),
             @ApiResponse(code = 401, message = "Authentication failure"),
@@ -91,11 +92,11 @@ public class MediaFilesResource {
             issueResponse(asyrsp, 404);
             return;
         }
-        issueResponse(asyrsp, new MediaDescriptor(item.getMeta()));
+        issueResponse(asyrsp, item.getMeta());
     }
 
     @javax.ws.rs.GET
-    @io.swagger.annotations.ApiOperation(value="Search media files", response=MediaDescriptor.class, responseContainer="List")
+    @io.swagger.annotations.ApiOperation(value="Search media files", response=MediaItem.class, responseContainer="List")
     @io.swagger.annotations.ApiResponses(value = {
             @ApiResponse(code = 200, message = "OK"),
             @ApiResponse(code = 401, message = "Authentication failure"),
@@ -112,11 +113,9 @@ public class MediaFilesResource {
             @QueryParam("page_size") int pageSize,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
-        List<MediaDescriptor> lst = new ArrayList<>();
-        for (MediaStore.StoreItem item : store.getAll()) {
-            MediaDescriptor xfer = new MediaDescriptor(item.getMeta());
-            lst.add(xfer);
-        }
+        List<MediaItem> lst = new ArrayList<>();
+        for (MediaStore.StoreItem item : store.getAll())
+            lst.add(item.getMeta());
         issueResponse(asyrsp, lst);
     }
 
@@ -139,6 +138,7 @@ public class MediaFilesResource {
         issueResponse(asyrsp, item == null ? 404 : 200);
     }
 
+    // TODO: Support upload via URL as well? Would just be another form-data field that's mutually exclusive with filedata
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @javax.ws.rs.POST
     @io.swagger.annotations.ApiOperation(value="Upload media file")
@@ -190,7 +190,7 @@ public class MediaFilesResource {
         @io.swagger.annotations.ApiImplicitParam(name = "api_secret", value = "Password for password-based login", paramType="query", dataType="string", defaultValue="secret1")
     })
     public void updateFile(@PathParam("media_id") String mediaId,
-            MediaDescriptor update,
+            MediaUpdate update,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
         MediaStore.StoreItem item = store.get(mediaId);
