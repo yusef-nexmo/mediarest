@@ -22,8 +22,8 @@ import io.dropwizard.auth.Auth;
 import io.swagger.annotations.Authorization;
 import io.swagger.annotations.ApiParam;
 import io.swagger.annotations.ApiResponse;
-import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataParam;
+import org.glassfish.jersey.media.multipart.FormDataBodyPart;
 
 import com.nexmo.mediarest.demo.MediaStore;
 import com.nexmo.mediarest.entities.MediaUpdate;
@@ -70,8 +70,8 @@ public class MediaFilesResource {
             @ApiResponse(code = 404, message = "No such item"),
             @ApiResponse(code = 500, message = "Internal server error") })
     @io.swagger.annotations.ApiImplicitParams({ //this aids the Swagger UI's try-it-out feature
-            @io.swagger.annotations.ApiImplicitParam(name = "api_key", value = "Username for password-based login", paramType="query", dataType="string"),
-            @io.swagger.annotations.ApiImplicitParam(name = "api_secret", value = "Password for password-based login", paramType="query", dataType="string", defaultValue="secret1")
+        @io.swagger.annotations.ApiImplicitParam(name = "api_key", value = "Username for password-based login", paramType="query", dataType="string"),
+        @io.swagger.annotations.ApiImplicitParam(name = "api_secret", value = "Password for password-based login", paramType="query", dataType="string", defaultValue="secret1")
     })
     public void getFileInfo(@PathParam("media_id") String mediaId,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
@@ -134,23 +134,21 @@ public class MediaFilesResource {
         @io.swagger.annotations.ApiImplicitParam(name = "api_key", value = "Username for password-based login", paramType="query", dataType="string"),
         @io.swagger.annotations.ApiImplicitParam(name = "api_secret", value = "Password for password-based login", paramType="query", dataType="string", defaultValue="secret1")
     })
-    public void uploadFile(@FormDataParam("filedata") InputStream istrm,
-            @FormDataParam("filename") FormDataContentDisposition contentDispositionHeader,
-            @FormDataParam("mimetype") String mimeType,
+    public void uploadFile(@FormDataParam("filedata") FormDataBodyPart fileContent,
+            @FormDataParam("filename") String filename, //allows FormDataBodyPart params to be overridden
+            @FormDataParam("mimetype") String mimeType, //allows FormDataBodyPart params to be overridden
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmo_id,
             @Context UriInfo uri,
             @Suspended AsyncResponse asyrsp) throws IOException {
+        InputStream istrm = (fileContent == null ? null : fileContent.getValueAs(InputStream.class));
         if (istrm == null) {
             Response httprsp = MediaRequest.makeResponse(400, "No file data");
             asyrsp.resume(httprsp);
             return;
         }
         byte[] data = readStream(istrm);
-        String filename = (contentDispositionHeader == null ? "anonfile" : contentDispositionHeader.getFileName());
-        if (mimeType == null || mimeType.isEmpty()) {
-            InputStream bstrm = new ByteArrayInputStream(data);
-            mimeType = URLConnection.guessContentTypeFromStream(bstrm);
-        }
+        filename = getFilename(filename, fileContent);
+        mimeType = getMimeType(mimeType, fileContent, data);
         MediaRequest task = new MediaRequest.UploadRequest(data, filename, mimeType, uri, store, asyrsp);
         taskExecutor.submit(task);
     }
@@ -174,7 +172,27 @@ public class MediaFilesResource {
         MediaRequest task = new MediaRequest.UpdateRequest(mediaId, update, store, asyrsp);
         taskExecutor.submit(task);
     }
-    
+
+    private static String getFilename(String filename, FormDataBodyPart fileContent) {
+        if (filename == null || filename.isEmpty()) {
+            if (fileContent != null && fileContent.getContentDisposition() != null)
+                filename = fileContent.getContentDisposition().getFileName();
+        }
+        return filename;
+    }
+
+    private static String getMimeType(String mimeType, FormDataBodyPart fileContent, byte[] data) throws IOException {
+        if (mimeType == null || mimeType.isEmpty()) {
+            if (fileContent != null)
+                mimeType = fileContent.getMediaType().toString();
+        }
+        if (mimeType == null || mimeType.isEmpty()) {
+            InputStream bstrm = new ByteArrayInputStream(data);
+            mimeType = URLConnection.guessContentTypeFromStream(bstrm);
+        }
+        return mimeType;  
+    }
+
     private static byte[] readStream(InputStream istrm) throws IOException {
         int provisionalSize = istrm.available();
         byte[] readbuf = new byte[provisionalSize == 0 ? 4096 : provisionalSize];
