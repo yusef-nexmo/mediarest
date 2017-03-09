@@ -11,7 +11,6 @@ import io.dropwizard.jersey.setup.JerseyEnvironment;
 import io.dropwizard.setup.Environment;
 
 public class MediaServiceApplication extends AbstractApplication<MediaServiceConfig> {
-    public static final String APIVERSION = "v3";
 
     public static void main(final String[] args) throws Exception {
         new MediaServiceApplication().run(args);
@@ -24,6 +23,6 @@ public class MediaServiceApplication extends AbstractApplication<MediaServiceCon
         envJersey.register(new MediaFilesResource());
         envJersey.register(new DummyAuthResourceJWT());
         envJersey.register(new DummyAuthResourcePassword());
-        setupSwagger(APIVERSION, getClass().getPackage().getName()+".endpoints");
+        setupSwagger("1", getClass().getPackage().getName()+".endpoints");
     }
 }

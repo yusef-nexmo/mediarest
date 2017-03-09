@@ -27,7 +27,7 @@ public class MediaStore {
         if (update.getMimeType() != null)
             item.meta.setMimeType(update.getMimeType());
         if (update.isPublic() != null)
-            item.meta.setAccountId(update.isPublic() ? "public1" : null); //xxx how exactly would this work?!!
+            item.meta.setAccountId(update.isPublic() ? "public1" : null); //TODO: how exactly would this work?!!
         item.meta.setTimeLastUpdated(new Date());
     }
 

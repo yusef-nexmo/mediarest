@@ -1,10 +1,12 @@
 package com.nexmo.mediarest.endpoints;
 
-import java.util.List;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.net.URLConnection;
+import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.PathParam;
@@ -23,20 +25,21 @@ import io.swagger.annotations.ApiResponse;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 
-import com.nexmo.mediarest.MediaServiceApplication;
 import com.nexmo.mediarest.demo.MediaStore;
 import com.nexmo.mediarest.entities.MediaUpdate;
+import com.nexmo.mediarest.handlers.MediaRequest;
 import com.nexmo.services.media.client.entity.MediaItem;
 import com.nexmo.restsvc.auth.NexmoIdentity;
 
-@javax.ws.rs.Path(MediaServiceApplication.APIVERSION+"/media")
+@javax.ws.rs.Path(MediaFilesResource.APIVERSION+"/media")
 @javax.ws.rs.Consumes(MediaType.APPLICATION_JSON)
 @javax.ws.rs.Produces(MediaType.APPLICATION_JSON)
 @io.swagger.annotations.Api(authorizations = {@Authorization(value="Bearer")})
 public class MediaFilesResource {
-    //xxx TODO: pipe all these actions into a CompletableFuture thread, to make use of async
-    
+
+    public static final String APIVERSION = "v3";
     private final MediaStore store = new MediaStore();
+    private final ExecutorService taskExecutor = Executors.newCachedThreadPool();
 
     @javax.ws.rs.Path("{media_id}")
     @javax.ws.rs.GET
@@ -53,23 +56,9 @@ public class MediaFilesResource {
     })
     public void downloadFile(@PathParam("media_id") String mediaId,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
-            @Suspended AsyncResponse asyrsp) throws IOException {
-        MediaStore.StoreItem item = store.get(mediaId);
-        if (item == null) {
-            issueResponse(asyrsp, 404);
-            return;
-        }
-        InputStream strm = null;
-        try {
-            strm = item.getFile();
-            Response httprsp = Response.ok(strm, item.getMeta().getMimeType()).header("Content-Disposition", "attachment").build();
-            asyrsp.resume(httprsp);
-        } catch (Exception ex) {
-            issueResponse(asyrsp, 500);
-        } finally {
-            if (strm != null)
-                strm.close();
-        }
+            @Suspended AsyncResponse asyrsp) {
+        MediaRequest task = new MediaRequest.DownloadRequest(mediaId, store, asyrsp);
+        taskExecutor.submit(task);
     }
 
     @javax.ws.rs.Path("{media_id}/info")
@@ -87,12 +76,8 @@ public class MediaFilesResource {
     public void getFileInfo(@PathParam("media_id") String mediaId,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
-        MediaStore.StoreItem item = store.get(mediaId);
-        if (item == null) {
-            issueResponse(asyrsp, 404);
-            return;
-        }
-        issueResponse(asyrsp, item.getMeta());
+        MediaRequest task = new MediaRequest.GetInfoRequest(mediaId, store, asyrsp);
+        taskExecutor.submit(task);
     }
 
     @javax.ws.rs.GET
@@ -113,10 +98,8 @@ public class MediaFilesResource {
             @QueryParam("page_size") int pageSize,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
-        List<MediaItem> lst = new ArrayList<>();
-        for (MediaStore.StoreItem item : store.getAll())
-            lst.add(item.getMeta());
-        issueResponse(asyrsp, lst);
+        MediaRequest task = new MediaRequest.SearchRequest(startDate, endDate, order, pageNumber, pageSize, store, asyrsp);
+        taskExecutor.submit(task);
     }
 
     @javax.ws.rs.Path("{media_id}")
@@ -134,8 +117,8 @@ public class MediaFilesResource {
     public void deleteFile(@PathParam("media_id") String mediaId,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
-        MediaStore.StoreItem item = store.delete(mediaId);
-        issueResponse(asyrsp, item == null ? 404 : 200);
+        MediaRequest task = new MediaRequest(mediaId, true, store, asyrsp);
+        taskExecutor.submit(task);
     }
 
     // TODO: Support upload via URL as well? Would just be another form-data field that's mutually exclusive with filedata
@@ -157,24 +140,19 @@ public class MediaFilesResource {
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmo_id,
             @Context UriInfo uri,
             @Suspended AsyncResponse asyrsp) throws IOException {
-        String filename = (contentDispositionHeader == null ? "anonfile" : contentDispositionHeader.getFileName());
         if (istrm == null) {
-            issueResponse(asyrsp, 400, "No file data");
+            Response httprsp = MediaRequest.makeResponse(400, "No file data");
+            asyrsp.resume(httprsp);
             return;
         }
-        int bufsiz = istrm.available();
-        if (bufsiz == 0) bufsiz = 4096;
-        byte[] buf = new byte[bufsiz];
-        ByteArrayOutputStream ostrm = new ByteArrayOutputStream(bufsiz);
-        int nbytes = 0;
-        while ((nbytes = istrm.read(buf)) != -1) {
-            ostrm.write(buf, 0, nbytes);
+        byte[] data = readStream(istrm);
+        String filename = (contentDispositionHeader == null ? "anonfile" : contentDispositionHeader.getFileName());
+        if (mimeType == null || mimeType.isEmpty()) {
+            InputStream bstrm = new ByteArrayInputStream(data);
+            mimeType = URLConnection.guessContentTypeFromStream(bstrm);
         }
-        MediaStore.StoreItem item = store.create(mimeType, filename, ostrm.toByteArray());
-        ostrm.close();
-        String location = uri.getAbsolutePath().getPath()+"/"+item.getId()+"/info";
-        Response httprsp = Response.status(Response.Status.fromStatusCode(201)).header("Location", location).build();
-        asyrsp.resume(httprsp);
+        MediaRequest task = new MediaRequest.UploadRequest(data, filename, mimeType, uri, store, asyrsp);
+        taskExecutor.submit(task);
     }
 
     @javax.ws.rs.Path("{media_id}/info")
@@ -193,26 +171,17 @@ public class MediaFilesResource {
             MediaUpdate update,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
             @Suspended AsyncResponse asyrsp) {
-        MediaStore.StoreItem item = store.get(mediaId);
-        if (item == null) {
-            issueResponse(asyrsp, 404);
-            return;
-        }
-        store.update(item, update);
-        issueResponse(asyrsp, 200);
+        MediaRequest task = new MediaRequest.UpdateRequest(mediaId, update, store, asyrsp);
+        taskExecutor.submit(task);
     }
-
-    private static void issueResponse(AsyncResponse asyrsp, Object obj) {
-        issueResponse(asyrsp, 200, obj);
-    }
-
-    private static void issueResponse(AsyncResponse asyrsp, int http_status) {
-        issueResponse(asyrsp, http_status, null);
-    }
-
-    private static void issueResponse(AsyncResponse asyrsp, int http_status, Object obj) {
-        if (obj == null) obj = "";
-        Response httprsp = Response.status(Response.Status.fromStatusCode(http_status)).entity(obj).build();
-        asyrsp.resume(httprsp);
+    
+    private static byte[] readStream(InputStream istrm) throws IOException {
+        int provisionalSize = istrm.available();
+        byte[] readbuf = new byte[provisionalSize == 0 ? 4096 : provisionalSize];
+        ByteArrayOutputStream ostrm = new ByteArrayOutputStream(readbuf.length);
+        int nbytes;
+        while ((nbytes = istrm.read(readbuf)) != -1)
+            ostrm.write(readbuf, 0, nbytes);
+        return ostrm.toByteArray();
     }
 }
