@@ -5,17 +5,17 @@ import java.util.ArrayList;
 import java.io.InputStream;
 import java.io.IOException;
 
-import javax.ws.rs.core.UriInfo;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.container.AsyncResponse;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import javax.servlet.http.HttpServletRequest;
 
 import com.nexmo.mediarest.demo.MediaStore;
 import com.nexmo.mediarest.entities.MediaUpdate;
 import com.nexmo.services.media.client.entity.MediaItem;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MediaRequest implements Runnable {
     private static final Logger Logger = LoggerFactory.getLogger(MediaRequest.class);
@@ -135,20 +135,20 @@ public class MediaRequest implements Runnable {
         private final byte[] fileData;
         private final String fileName;
         private final String mimeType;
-        private final UriInfo requestURL;
+        private final HttpServletRequest httpreq;
 
-        public UploadRequest(byte[] fileData, String fileName, String mimeType, UriInfo url, MediaStore store, AsyncResponse asyrsp) {
+        public UploadRequest(byte[] fileData, String fileName, String mimeType, HttpServletRequest httpreq, MediaStore store, AsyncResponse asyrsp) {
             super(null, store, asyrsp);
             this.fileData = fileData;
             this.fileName = fileName;
             this.mimeType = mimeType;
-            this.requestURL = url;
+            this.httpreq = httpreq;
         } 
 
         @Override
         public void execute() {
             MediaStore.StoreItem item = store.create(mimeType, fileName, fileData);
-            String location = requestURL.getAbsolutePath().getPath()+"/"+item.getId()+"/info";
+            String location = httpreq.getRequestURI()+"/"+item.getId()+"/info";
             ResponseBuilder bldr = Response.status(Response.Status.fromStatusCode(201));
             bldr = bldr.header("Location", location);
             issueResponse(bldr.build());

@@ -15,10 +15,10 @@ import javax.ws.rs.PathParam;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.container.Suspended;
+import javax.servlet.http.HttpServletRequest;
 
 import io.dropwizard.auth.Auth;
 import io.swagger.annotations.Api;
@@ -128,18 +128,25 @@ public class MediaFilesResource {
             @FormDataParam("filename") String fileName, //allows FormDataBodyPart params to be overridden
             @FormDataParam("mimetype") String mimeType, //allows FormDataBodyPart params to be overridden
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
-            @Context UriInfo uri,
-            @Suspended AsyncResponse asyrsp) throws IOException {
+            @Context HttpServletRequest httpreq,
+            @Suspended AsyncResponse asyrsp) {
         InputStream istrm = (fileContent == null ? null : fileContent.getValueAs(InputStream.class));
         if (istrm == null) {
             Response httprsp = MediaRequest.makeResponse(400, "No file data");
             asyrsp.resume(httprsp);
             return;
         }
-        byte[] data = readStream(istrm);
+        byte[] data;
+        try {
+            data = readStream(istrm);
+            mimeType = getMimeType(mimeType, fileContent, data);
+        } catch (IOException ex) {
+            Response httprsp = MediaRequest.makeResponse(400, "Failed to read upload - "+ex.getMessage());
+            asyrsp.resume(httprsp);
+            return;
+        }
         fileName = getFilename(fileName, fileContent);
-        mimeType = getMimeType(mimeType, fileContent, data);
-        MediaRequest task = new MediaRequest.UploadRequest(data, fileName, mimeType, uri, store, asyrsp);
+        MediaRequest task = new MediaRequest.UploadRequest(data, fileName, mimeType, httpreq, store, asyrsp);
         taskExecutor.submit(task);
     }
 
@@ -156,16 +163,23 @@ public class MediaFilesResource {
     public void uploadFileRaw(InputStream istrm,
             @HeaderParam("Content-Type") String mimeType,
             @Auth @ApiParam(hidden=true) NexmoIdentity nexmoId,
-            @Context UriInfo uri,
-            @Suspended AsyncResponse asyrsp) throws IOException {
+            @Context HttpServletRequest httpreq,
+            @Suspended AsyncResponse asyrsp) {
         if (istrm == null) {
             Response httprsp = MediaRequest.makeResponse(400, "No file data");
             asyrsp.resume(httprsp);
             return;
         }
-        byte[] data = readStream(istrm);
-        mimeType = getMimeType(mimeType, null, data);
-        MediaRequest task = new MediaRequest.UploadRequest(data, "filename1", mimeType, uri, store, asyrsp);
+        byte[] data;
+        try {
+            data = readStream(istrm);
+            mimeType = getMimeType(mimeType, null, data);
+        } catch (IOException ex) {
+            Response httprsp = MediaRequest.makeResponse(400, "Failed to read upload - "+ex.getMessage());
+            asyrsp.resume(httprsp);
+            return;
+        }
+        MediaRequest task = new MediaRequest.UploadRequest(data, "filename1", mimeType, httpreq, store, asyrsp);
         taskExecutor.submit(task);
     }
 
@@ -184,24 +198,24 @@ public class MediaFilesResource {
         taskExecutor.submit(task);
     }
 
-    private static String getFilename(String filename, FormDataBodyPart fileContent) {
-        if (filename == null || filename.isEmpty()) {
-            if (fileContent != null && fileContent.getContentDisposition() != null)
-                filename = fileContent.getContentDisposition().getFileName();
-        }
-        return filename;
-    }
-
     private static String getMimeType(String mimeType, FormDataBodyPart fileContent, byte[] data) throws IOException {
         if (mimeType == null || mimeType.isEmpty()) {
             if (fileContent != null)
-                mimeType = fileContent.getMediaType().toString();
+                mimeType = fileContent.getMediaType().getType()+"/"+fileContent.getMediaType().getSubtype();
         }
         if (mimeType == null || mimeType.isEmpty()) {
             InputStream bstrm = new ByteArrayInputStream(data);
             mimeType = URLConnection.guessContentTypeFromStream(bstrm);
         }
         return mimeType;  
+    }
+
+    private static String getFilename(String filename, FormDataBodyPart fileContent) {
+        if (filename == null || filename.isEmpty()) {
+            if (fileContent != null && fileContent.getContentDisposition() != null)
+                filename = fileContent.getContentDisposition().getFileName();
+        }
+        return filename;
     }
 
     private static byte[] readStream(InputStream istrm) throws IOException {
